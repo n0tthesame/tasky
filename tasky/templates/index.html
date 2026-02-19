@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Tasky — задачи и привычки</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{background:#0f172a;color:#e5e7eb;font-family:system-ui,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px}
+    h1{color:#93c5fd;margin:0 0 8px}
+    h2{color:#a5b4fc;margin:16px 0 8px}
+    input,select,button,textarea{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:8px}
+    button{background:#2563eb;border:none;cursor:pointer}
+    button:hover{background:#1d4ed8}
+    .grid{display:grid;gap:8px}
+    .grid-5{grid-template-columns:2fr 1fr 1fr 1fr 120px}
+    .grid-4{grid-template-columns:2fr 1fr 1fr 120px}
+    .row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+    .card{border:1px solid #374151;background:#111827;border-radius:10px;padding:12px}
+    .list{display:grid;gap:8px}
+    .muted{color:#9ca3af;font-size:12px}
+    .status.todo{color:#facc15}.status.in_progress{color:#60a5fa}.status.done{color:#34d399;text-decoration:line-through}
+    .score{margin:6px 0}.bar{height:12px;background:#374151;border-radius:8px;overflow:hidden}.fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#4ade80);transition:width .4s}
+    .overdue{border-color:#f87171;background:#171923}
+    .tag{background:#1f2937;border:1px solid #374151;border-radius:6px;padding:2px 6px}
+    .err{background:#7f1d1d;border:1px solid #ef4444;border-radius:8px;padding:8px;margin:8px 0}
+  </style>
+</head>
+<body>
+  <h1>Tasky — трекер задач</h1>
+  <div id="errorBox"></div>
+  <div class="row">
+    <div>Продуктивность: <b id="scoreText">0%</b></div>
+    <div class="score" style="flex:1"><div class="bar"><div id="scoreFill" class="fill"></div></div></div>
+  </div>
+
+  <h2>Привычки</h2>
+  <form id="habitForm" class="grid grid-5">
+    <input id="hTitle" placeholder="Привычка (например: Сделать зарядку)" required />
+    <select id="hPeriod">
+      <option value="daily">ежедневно</option>
+      <option value="weekly">еженедельно</option>
+    </select>
+    <select id="hTarget">
+      <option value="1">1 раз</option><option value="2">2 раза</option><option value="3">3 раза</option>
+      <option value="4">4 раза</option><option value="5">5 раз</option><option value="6">6 раз</option>
+      <option value="7">7 раз</option><option value="8">8 раз</option><option value="9">9 раз</option><option value="10">10 раз</option>
+    </select>
+    <span class="muted" style="align-self:center">за период</span>
+    <button type="submit">Добавить</button>
+  </form>
+  <div id="habits" class="list" style="margin-top:8px"></div>
+
+  <h2>Задачи</h2>
+  <form id="taskForm" class="grid grid-4">
+    <input id="tTitle" placeholder="Название задачи" required />
+    <select id="tStatus">
+      <option value="todo">🕓 В плане</option>
+      <option value="in_progress">🔧 В процессе</option>
+      <option value="done">✅ Выполнено</option>
+    </select>
+    <select id="tPriority">
+      <option value="1">Приоритет 1 (высокий)</option>
+      <option value="2">Приоритет 2</option>
+      <option value="3" selected>Приоритет 3</option>
+      <option value="4">Приоритет 4</option>
+      <option value="5">Приоритет 5 (низкий)</option>
+    </select>
+    <button type="submit">Добавить</button>
+    <textarea id="tDesc" placeholder="Описание (необязательно)" style="grid-column:1/-1"></textarea>
+    <input id="tDue" type="date" />
+    <span class="muted" style="align-self:center">дедлайн (необязательно)</span>
+  </form>
+  <div id="tasks" class="list" style="margin-top:8px"></div>
+
+  <h2>Архив задач</h2>
+  <div id="archiveTasks" class="list" style="margin-top:8px"></div>
+
+  <h2>Архив привычек</h2>
+  <div id="archiveHabits" class="list" style="margin-top:8px"></div>
+
+  <script>
+    // безопасные утилиты
+    const $ = (id) => document.getElementById(id);
+    const showErr = (msg) => { $("errorBox").innerHTML = `<div class="err">${escapeHtml(msg)}</div>`; setTimeout(()=>$("errorBox").innerHTML='', 4000); }
+    const escapeHtml = (str='') => String(str).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[m]));
+
+    // API
+    const api = {
+      async score(){ const r = await fetch('/score'); if(!r.ok) throw new Error('score failed'); return r.json(); },
+
+      async habits(){ const r = await fetch('/habits'); if(!r.ok) throw new Error('habits failed'); return r.json(); },
+      async addHabit(d){ const r = await fetch('/habits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); if(!r.ok) throw await r.json(); return r.json(); },
+      async delHabit(id){ const r = await fetch(`/habits/${id}`,{method:'DELETE'}); if(!r.ok) throw new Error('delete habit failed'); },
+      async checkHabit(id){ const r = await fetch(`/habits/${id}/check`,{method:'POST'}); if(!r.ok) throw new Error('check habit failed'); return r.json(); },
+      async uncheckHabit(id){ const r = await fetch(`/habits/${id}/uncheck`,{method:'POST'}); if(!r.ok) throw new Error('uncheck habit failed'); return r.json(); },
+
+      async tasks(){ const r = await fetch('/tasks'); if(!r.ok) throw new Error('tasks failed'); return r.json(); },
+      async addTask(d){ const r = await fetch('/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); if(!r.ok) throw await r.json(); return r.json(); },
+      async patchTask(id,d){ const r = await fetch(`/tasks/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); if(!r.ok) throw await r.json(); return r.json(); },
+      async delTask(id){ const r = await fetch(`/tasks/${id}`,{method:'DELETE'}); if(!r.ok) throw new Error('delete task failed'); },
+
+      async archiveTasks(){ const r = await fetch('/archive/tasks'); if(!r.ok) throw new Error('archive tasks failed'); return r.json(); },
+      async archiveHabits(){ const r = await fetch('/archive/habits'); if(!r.ok) throw new Error('archive habits failed'); return r.json(); },
+    };
+
+    function statusLabel(code) {
+      switch (code) {
+        case 'todo': return '🕓 В плане';
+        case 'in_progress': return '🔧 В процессе';
+        case 'done': return '✅ Выполнено';
+        default: return code;
+      }
+    }
+
+    async function renderScore(){
+      try {
+        const s = await api.score();
+        const v = s.score ?? 0;
+        $("scoreText").textContent = v + '%';
+        $("scoreFill").style.width = v + '%';
+      } catch(e){ showErr('Не удалось обновить показатель продуктивности'); }
+    }
+
+    async function renderHabits(){
+      try {
+        const list = await api.habits();
+        const box = $("habits");
+        box.innerHTML = '';
+        if(!list.length){ box.innerHTML = '<div class="muted">Привычек пока нет</div>'; return; }
+        for(const h of list){
+          const left = Math.max(h.target - h.done, 0);
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="row">
+              <div><b>${escapeHtml(h.title)}</b> <span class="tag">${h.period === 'daily' ? 'ежедневно' : 'еженедельно'}</span></div>
+              <div class="muted">${h.done} / ${h.target}</div>
+            </div>
+            <div class="row">
+              <div class="muted">${left ? `осталось: ${left}` : 'норма выполнена ✅'}</div>
+              <div>
+                <button onclick="incHabit(${h.id})">+1</button>
+                <button onclick="decHabit(${h.id})">-1</button>
+                <button onclick="removeHabit(${h.id})">Удалить</button>
+              </div>
+            </div>`;
+          box.appendChild(card);
+        }
+      } catch(e){ showErr('Не удалось загрузить привычки'); }
+    }
+
+    async function renderTasks(){
+      try {
+        const list = await api.tasks();
+        const box = $("tasks");
+        box.innerHTML = '';
+        if(!list.length){ box.innerHTML = '<div class="muted">Задач пока нет</div>'; return; }
+        const today = new Date().toISOString().slice(0,10);
+        for(const t of list){
+          const card = document.createElement('div');
+          card.className = 'card';
+          if(t.due_date && t.status !== 'done' && t.due_date < today) card.classList.add('overdue');
+          card.innerHTML = `
+            <div class="row">
+              <div><b>#${t.id}</b> ${escapeHtml(t.title)}</div>
+              <div class="muted">приоритет: ${t.priority}</div>
+            </div>
+            ${t.description ? `<div class="muted">${escapeHtml(t.description)}</div>` : ''}
+            <div class="row">
+              <div>статус: <span class="status ${t.status}">${statusLabel(t.status)}</span>${t.due_date ? ` · дедлайн: ${t.due_date}` : ''}</div>
+              <div>
+                <button onclick="cycleTask(${t.id}, '${t.status}')">Изменить статус</button>
+                <button onclick="removeTask(${t.id})">Удалить</button>
+              </div>
+            </div>`;
+          box.appendChild(card);
+        }
+      } catch(e){ showErr('Не удалось загрузить задачи'); }
+    }
+
+    async function renderArchive(){
+      try {
+        const arrT = await api.archiveTasks();
+        const arrH = await api.archiveHabits();
+
+        const boxT = $("archiveTasks");
+        boxT.innerHTML = '';
+        if(!arrT.length){ boxT.innerHTML = '<div class="muted">Архив задач пуст</div>'; }
+        else {
+          for(const t of arrT){
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+              <div class="row">
+                <div><b>#${t.id}</b> ${escapeHtml(t.title)}</div>
+                <div class="muted">приоритет: ${t.priority}</div>
+              </div>
+              ${t.description ? `<div class="muted">${escapeHtml(t.description)}</div>` : ''}
+              <div class="muted">Статус: ${statusLabel(t.status)} · Удалена: ${new Date(t.created_at).toLocaleString()}</div>`;
+            boxT.appendChild(card);
+          }
+        }
+
+        const boxH = $("archiveHabits");
+        boxH.innerHTML = '';
+        if(!arrH.length){ boxH.innerHTML = '<div class="muted">Архив привычек пуст</div>'; }
+        else {
+          for(const h of arrH){
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+              <div class="row">
+                <div><b>${escapeHtml(h.title)}</b> <span class="tag">${h.period==='daily'?'ежедневно':'еженедельно'}</span></div>
+                <div class="muted">цель: ${h.target}</div>
+              </div>
+              <div class="muted">Удалена: ${new Date(h.deleted_at).toLocaleString()}</div>`;
+            boxH.appendChild(card);
+          }
+        }
+      } catch(e){ showErr('Не удалось загрузить архив'); }
+    }
+
+    // actions
+    async function incHabit(id){ try{ await api.checkHabit(id); await renderHabits(); await renderScore(); } catch(e){ showErr('Ошибка +1 привычки'); } }
+    async function decHabit(id){ try{ await api.uncheckHabit(id); await renderHabits(); await renderScore(); } catch(e){ showErr('Ошибка -1 привычки'); } }
+    async function removeHabit(id){ try{ await api.delHabit(id); await renderHabits(); await renderArchive(); await renderScore(); } catch(e){ showErr('Ошибка удаления привычки'); } }
+
+    async function cycleTask(id, st){
+      try {
+        const next = st==='todo'?'in_progress':st==='in_progress'?'done':'todo';
+        await api.patchTask(id,{status:next});
+        await renderTasks(); await renderScore();
+      } catch(e){ showErr('Не удалось сменить статус задачи'); }
+    }
+    async function removeTask(id){
+      try { await api.delTask(id); await renderTasks(); await renderArchive(); await renderScore(); }
+      catch(e){ showErr('Ошибка удаления задачи'); }
+    }
+
+    // forms
+    $("habitForm").addEventListener('submit', async e=>{
+      e.preventDefault();
+      try{
+        await api.addHabit({ title: $("hTitle").value.trim(), period: $("hPeriod").value, target: +$("hTarget").value });
+        e.target.reset(); await renderHabits(); await renderScore();
+      } catch(err){ showErr('Ошибка добавления привычки'); }
+    });
+
+    $("taskForm").addEventListener('submit', async e=>{
+      e.preventDefault();
+      try{
+        await api.addTask({
+          title: $("tTitle").value.trim(),
+          description: $("tDesc").value.trim() || null,
+          status: $("tStatus").value,
+          priority: +$("tPriority").value,
+          due_date: $("tDue").value || null
+        });
+        e.target.reset(); await renderTasks(); await renderScore();
+      } catch(err){ showErr('Ошибка добавления задачи'); }
+    });
+
+    // init
+    (async function(){
+      await renderHabits();
+      await renderTasks();
+      await renderArchive();
+      await renderScore();
+    })();
+  </script>
+</body>
+</html>
